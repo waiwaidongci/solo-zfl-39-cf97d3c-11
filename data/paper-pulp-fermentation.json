@@ -29,7 +29,41 @@
           "changedWater": "是",
           "abnormal": false
         }
-      ]
+      ],
+      "vatId": "V-mu2jotw0-1"
+    }
+  ],
+  "vats": [
+    {
+      "id": "V-mu2jotw0-1",
+      "name": "三号缸",
+      "status": "pending_recheck",
+      "note": "历史数据迁移：缺少清洗与放行记录，标记待补检，须走完整清洗流程后方可使用",
+      "occupiedBy": "PF-001",
+      "release": null,
+      "activeOrderId": null,
+      "createdAt": "2026-09-15T10:44:43.728Z"
+    }
+  ],
+  "cleaningOrders": [],
+  "disinfectants": [
+    {
+      "id": "D-mu2jotw0-2",
+      "batch": "XD-2026-01",
+      "name": "次氯酸钠消毒剂",
+      "expiresAt": "2027-12-31",
+      "createdAt": "2026-09-15T10:44:43.728Z"
+    }
+  ],
+  "audit": [
+    {
+      "at": "2026-09-15T10:44:43.728Z",
+      "actor": "system",
+      "action": "migrate_pending_recheck",
+      "vatId": "V-mu2jotw0-1",
+      "orderId": null,
+      "itemId": null,
+      "detail": "历史缸具「三号缸」缺少清洗记录，标记为待补检"
     }
   ]
 }
