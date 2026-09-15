@@ -58,6 +58,14 @@ page.on("console", (m) => {
   if (/Failed to load resource: the server responded with a status of 4\d\d/.test(m.text())) return;
   errors.push("console: " + m.text());
 });
+// 请求计数：验证留空/取消时不发请求
+let notePosts = 0;
+let quarantinePosts = 0;
+page.on("request", (r) => {
+  if (r.method() !== "POST") return;
+  if (/\/api\/items\/[^/]+\/logs/.test(r.url())) notePosts++;
+  if (/\/api\/vats\/[^/]+\/quarantine/.test(r.url())) quarantinePosts++;
+});
 
 const vatCard = (name) => page.locator("#vatCards .card", { hasText: name });
 const orderCard = (name) => page.locator("#orderCards .card", { hasText: name });
@@ -196,14 +204,54 @@ try {
   ok((await orderCount()) === 2, "筛选未到期", await orderCount());
   await page.selectOption("#fExpiry", "");
 
-  console.log("\n[UI-6] 审计页签");
+  console.log("\n[UI-6] 备注与隔离入口（填写/留空/取消）");
+  await switchTab("items");
+  const card = page.locator("#cards .card", { hasText: "PF-UI1" });
+  await card.locator("button", { hasText: /^追加备注$/ }).click();
+  ok(await card.locator('[id^="notebox-"]').isVisible(), "备注输入框在页面内展开");
+  const noteBefore = notePosts;
+  await card.locator("button", { hasText: /^提交备注$/ }).click();
+  await bannerShows("未提交");
+  ok(notePosts === noteBefore, "备注留空：页面提示且不发请求", notePosts);
+  await card.locator('[id^="note-"]').fill("这条不应提交");
+  await card.locator("button", { hasText: /^取消$/ }).click();
+  await bannerShows("已取消");
+  ok(notePosts === noteBefore && !(await card.locator('[id^="notebox-"]').isVisible()), "备注取消：提示、收起且不发请求", notePosts);
+  await card.locator("button", { hasText: /^追加备注$/ }).click();
+  await card.locator('[id^="note-"]').fill("浏览器备注：纤维松散良好");
+  await card.locator("button", { hasText: /^提交备注$/ }).click();
+  await card.locator("text=浏览器备注：纤维松散良好").waitFor();
+  ok(notePosts === noteBefore + 1, "备注填写：提交成功并刷新展示", notePosts);
+
+  await switchTab("cleaning");
+  const vc = vatCard("UI一号缸");
+  await vc.locator("button", { hasText: /^隔离$/ }).click();
+  ok(await vc.locator('[id^="qbox-"]').isVisible(), "隔离原因输入框在页面内展开");
+  const qBefore = quarantinePosts;
+  await vc.locator("button", { hasText: /^确认隔离$/ }).click();
+  await bannerShows("未提交");
+  ok(quarantinePosts === qBefore, "隔离留空：页面提示且不发请求", quarantinePosts);
+  await vc.locator('[id^="qreason-"]').fill("这条不应提交");
+  await vc.locator("button", { hasText: /^取消$/ }).click();
+  await bannerShows("已取消");
+  ok(quarantinePosts === qBefore && !(await vc.locator('[id^="qbox-"]').isVisible()), "隔离取消：提示、收起且不发请求", quarantinePosts);
+  await vc.locator("button", { hasText: /^隔离$/ }).click();
+  await vc.locator('[id^="qreason-"]').fill("缸壁裂纹");
+  await vc.locator("button", { hasText: /^确认隔离$/ }).click();
+  await vc.locator(".pill", { hasText: "已隔离" }).waitFor();
+  ok(quarantinePosts === qBefore + 1, "隔离填写：提交成功，缸具状态刷新为已隔离", quarantinePosts);
+  await vc.locator("button", { hasText: /^解除隔离$/ }).click();
+  await vc.locator(".pill", { hasText: "待清洗" }).waitFor();
+  ok(true, "解除隔离恢复待清洗");
+
+  console.log("\n[UI-7] 审计页签");
   await switchTab("audit");
   await page.locator("#auditTable table").waitFor();
   const auditText = await page.locator("#auditTable").textContent();
-  ok(auditText.includes("派单") && auditText.includes("领单") && auditText.includes("放行") && auditText.includes("换缸"), "审计日志展示闭环动作");
+  ok(auditText.includes("派单") && auditText.includes("领单") && auditText.includes("放行") && auditText.includes("换缸") && auditText.includes("隔离"), "审计日志展示闭环动作");
   ok(!auditText.includes("整单拒绝"), "422回滚后审计无拒绝记录", undefined);
 
-  console.log("\n[UI-7] 控制台错误");
+  console.log("\n[UI-8] 控制台错误");
   ok(errors.length === 0, "全程无浏览器控制台错误", errors);
 } finally {
   await browser.close();

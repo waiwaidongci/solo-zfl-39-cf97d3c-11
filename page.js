@@ -166,13 +166,28 @@ export function page() {
         h += '<div class="meta">无可换入的已放行缸具</div>';
       }
       h += '<div class="row"><select id="st-' + esc(id) + '">' + STAGES.map(function(s){ return "<option " + (s === item.status ? "selected" : "") + ">" + s + "</option>"; }).join("") + '</select><button class="secondary" onclick="changeStatus(' + arg(id) + ')">改状态</button></div>';
-      h += '<button class="secondary" onclick="addNote(' + arg(id) + ')">追加备注</button>';
+      h += '<button class="secondary" onclick="toggleNote(' + arg(id) + ')">追加备注</button>';
+      h += '<div class="row hidden" id="notebox-' + esc(id) + '"><input id="note-' + esc(id) + '" placeholder="填写备注内容"><button class="secondary" onclick="submitNote(' + arg(id) + ')">提交备注</button><button class="secondary" onclick="cancelNote(' + arg(id) + ')">取消</button></div>';
       var logs = (item.logs || []).slice(-4).map(function(l){ return "<div>" + esc(l.step) + "：" + esc(l.note) + "</div>"; }).join("");
       h += '<div class="logs meta">' + (logs || "暂无记录") + "</div>";
       return '<article class="card">' + h + "</article>";
     }
     function changeStatus(id){ run(api("/api/items/" + encodeURIComponent(id), { method: "PATCH", body: JSON.stringify({ status: $("#st-" + CSS.escape(id)).value }) }).then(loadAll)); }
-    function addNote(id){ var note = prompt("记录备注"); if (note) run(api("/api/items/" + encodeURIComponent(id) + "/logs", { method: "POST", body: JSON.stringify({ step: "备注", note: note }) }).then(loadAll)); }
+    function toggleNote(id){
+      var b = $("#notebox-" + CSS.escape(id));
+      b.classList.toggle("hidden");
+      if (!b.classList.contains("hidden")) { var i = $("#note-" + CSS.escape(id)); i.value = ""; i.focus(); }
+    }
+    function cancelNote(id){
+      $("#notebox-" + CSS.escape(id)).classList.add("hidden");
+      $("#note-" + CSS.escape(id)).value = "";
+      showErr("已取消，未提交备注");
+    }
+    function submitNote(id){
+      var note = $("#note-" + CSS.escape(id)).value.trim();
+      if (!note) return showErr("备注内容为空，未提交");
+      run(api("/api/items/" + encodeURIComponent(id) + "/logs", { method: "POST", body: JSON.stringify({ step: "备注", note: note }) }).then(loadAll));
+    }
     function swapVat(id){
       var sel = $("#swap-" + CSS.escape(id));
       if (!sel || !sel.value) return showErr("没有可换入的缸具");
@@ -216,7 +231,8 @@ export function page() {
       if (v.status === "quarantined") {
         h += '<button class="secondary" onclick="unquarantineVat(' + arg(v.id) + ')">解除隔离</button>';
       } else if (!v.occupiedBy && !v.activeOrder) {
-        h += '<button class="danger" onclick="quarantineVat(' + arg(v.id) + ')">隔离</button>';
+        h += '<button class="danger" onclick="toggleQuarantine(' + arg(v.id) + ')">隔离</button>';
+        h += '<div class="row hidden" id="qbox-' + esc(v.id) + '"><input id="qreason-' + esc(v.id) + '" placeholder="填写隔离原因（必填）"><button class="danger" onclick="submitQuarantine(' + arg(v.id) + ')">确认隔离</button><button class="secondary" onclick="cancelQuarantine(' + arg(v.id) + ')">取消</button></div>';
       }
       return '<article class="card">' + h + "</article>";
     }
@@ -296,7 +312,21 @@ export function page() {
       var g = function(p){ return $("#" + p + "-" + CSS.escape(id)).value; };
       run(api("/api/cleaning-orders/" + id + "/release", { method: "POST", body: JSON.stringify({ releasedBy: g("rb"), validHours: g("vh") }) }).then(loadAll));
     }
-    function quarantineVat(id){ var reason = prompt("隔离原因") || ""; run(api("/api/vats/" + encodeURIComponent(id) + "/quarantine", { method: "POST", body: JSON.stringify({ reason: reason }) }).then(loadAll)); }
+    function toggleQuarantine(id){
+      var b = $("#qbox-" + CSS.escape(id));
+      b.classList.toggle("hidden");
+      if (!b.classList.contains("hidden")) { var i = $("#qreason-" + CSS.escape(id)); i.value = ""; i.focus(); }
+    }
+    function cancelQuarantine(id){
+      $("#qbox-" + CSS.escape(id)).classList.add("hidden");
+      $("#qreason-" + CSS.escape(id)).value = "";
+      showErr("已取消，未提交隔离");
+    }
+    function submitQuarantine(id){
+      var reason = $("#qreason-" + CSS.escape(id)).value.trim();
+      if (!reason) return showErr("隔离原因为空，未提交");
+      run(api("/api/vats/" + encodeURIComponent(id) + "/quarantine", { method: "POST", body: JSON.stringify({ reason: reason }) }).then(loadAll));
+    }
     function unquarantineVat(id){ run(api("/api/vats/" + encodeURIComponent(id) + "/unquarantine", { method: "POST", body: "{}" }).then(loadAll)); }
 
     // ===== 审计页签 =====
