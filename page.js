@@ -97,7 +97,7 @@ export function page() {
             <select id="fVat"><option value="">全部缸具</option></select>
             <select id="fShift"><option value="">全部班次</option></select>
             <select id="fReleased"><option value="">放行：全部</option><option value="released">已放行</option><option value="unreleased">未放行</option></select>
-            <select id="fExpiry"><option value="">到期：全部</option><option value="expired">已到期</option><option value="expiring">临期(72h内)</option><option value="valid">未到期</option></select>
+            <select id="fExpiry"><option value="">到期：全部</option><option value="expired">已到期</option><option value="expiring">临期</option><option value="valid">未到期</option></select>
           </div>
           <div class="panel" style="margin-bottom:14px"><h2>缸具台账</h2><div class="grid" id="vatCards"></div></div>
           <div class="panel"><h2>清洗工单（领单 → 参数登记 → 复检 → 放行 → 到期失效）</h2><div class="grid" id="orderCards"></div></div>
@@ -161,12 +161,12 @@ export function page() {
       h += "<div><b>发酵天数</b> " + esc(item.days) + " · <b>负责人</b> " + esc(item.owner || "") + "</div>";
       var swapOpts = usableVats().filter(function(v){ return v.id !== item.vatId; });
       if (swapOpts.length) {
-        h += '<div class="row"><select id="swap-' + esc(id) + '">' + swapOpts.map(function(v){ return '<option value="' + esc(v.id) + '">' + esc(v.name) + "</option>"; }).join("") + '</select><button class="secondary" onclick=\'swapVat(' + arg(id) + ")'>换缸</button></div>";
+        h += '<div class="row"><select id="swap-' + esc(id) + '">' + swapOpts.map(function(v){ return '<option value="' + esc(v.id) + '">' + esc(v.name) + "</option>"; }).join("") + '</select><button class="secondary" onclick="swapVat(' + arg(id) + ')">换缸</button></div>';
       } else {
         h += '<div class="meta">无可换入的已放行缸具</div>';
       }
-      h += '<div class="row"><select id="st-' + esc(id) + '">' + STAGES.map(function(s){ return "<option " + (s === item.status ? "selected" : "") + ">" + s + "</option>"; }).join("") + '</select><button class="secondary" onclick=\'changeStatus(' + arg(id) + ")'>改状态</button></div>";
-      h += '<button class="secondary" onclick=\'addNote(' + arg(id) + ")'>追加备注</button>";
+      h += '<div class="row"><select id="st-' + esc(id) + '">' + STAGES.map(function(s){ return "<option " + (s === item.status ? "selected" : "") + ">" + s + "</option>"; }).join("") + '</select><button class="secondary" onclick="changeStatus(' + arg(id) + ')">改状态</button></div>';
+      h += '<button class="secondary" onclick="addNote(' + arg(id) + ')">追加备注</button>';
       var logs = (item.logs || []).slice(-4).map(function(l){ return "<div>" + esc(l.step) + "：" + esc(l.note) + "</div>"; }).join("");
       h += '<div class="logs meta">' + (logs || "暂无记录") + "</div>";
       return '<article class="card">' + h + "</article>";
@@ -194,6 +194,7 @@ export function page() {
       fv.value = keepVat;
       var fs = $("#fShift");
       if (fs.dataset.init !== "1") { fs.innerHTML = '<option value="">全部班次</option>' + S.config.shifts.map(function(s){ return "<option>" + s + "</option>"; }).join(""); fs.dataset.init = "1"; }
+      $("#fExpiry").options[2].text = "临期(" + S.config.expiringSoonHours + "h内)";
       $("#disList").innerHTML = S.disinfectants.map(function(d){
         return '<div class="meta">' + esc(d.batch) + " · " + esc(d.name) + " · 有效期至 " + esc(d.expiresAt) + (d.expired ? ' <span class="warn">已过期</span>' : "") + "</div>";
       }).join("") || '<div class="meta">暂无批次</div>';
@@ -210,12 +211,12 @@ export function page() {
       if (v.activeOrder) h += '<div class="meta">当前工单 ' + esc(v.activeOrder.id) + " · " + esc(v.activeOrder.statusLabel) + " · " + esc(v.activeOrder.shift) + "</div>";
       if (v.note) h += '<div class="meta">' + esc(v.note) + "</div>";
       if (v.dispatchable) {
-        h += '<div class="row"><select id="shift-' + esc(v.id) + '">' + S.config.shifts.map(function(s){ return "<option>" + s + "</option>"; }).join("") + '</select><button onclick=\'dispatchOrder(' + arg(v.id) + ")'>派单</button></div>";
+        h += '<div class="row"><select id="shift-' + esc(v.id) + '">' + S.config.shifts.map(function(s){ return "<option>" + s + "</option>"; }).join("") + '</select><button onclick="dispatchOrder(' + arg(v.id) + ')">派单</button></div>';
       }
       if (v.status === "quarantined") {
-        h += '<button class="secondary" onclick=\'unquarantineVat(' + arg(v.id) + ")'>解除隔离</button>";
+        h += '<button class="secondary" onclick="unquarantineVat(' + arg(v.id) + ')">解除隔离</button>';
       } else if (!v.occupiedBy && !v.activeOrder) {
-        h += '<button class="danger" onclick=\'quarantineVat(' + arg(v.id) + ")'>隔离</button>";
+        h += '<button class="danger" onclick="quarantineVat(' + arg(v.id) + ')">隔离</button>';
       }
       return '<article class="card">' + h + "</article>";
     }
@@ -249,7 +250,7 @@ export function page() {
     function orderAction(o){
       var id = o.id;
       if (o.status === "dispatched") {
-        return '<label>操作人</label><input id="op-' + esc(id) + '" placeholder="领单人姓名"><button onclick=\'claimOrder(' + arg(id) + ")'>领单</button>";
+        return '<label>操作人</label><input id="op-' + esc(id) + '" placeholder="领单人姓名"><button onclick="claimOrder(' + arg(id) + ')">领单</button>';
       }
       if (o.status === "claimed") {
         var opts = S.disinfectants.map(function(d){ return '<option value="' + esc(d.batch) + '"' + (d.expired ? " disabled" : "") + ">" + esc(d.batch) + " · " + esc(d.name) + (d.expired ? "（已过期）" : "") + "</option>"; }).join("");
@@ -258,18 +259,18 @@ export function page() {
           + '<label>时长（分钟）</label><input id="du-' + esc(id) + '" type="number">'
           + '<label>操作人</label><input id="op2-' + esc(id) + '" value="' + esc(o.claimedBy || "") + '">'
           + '<label>消毒剂批次</label><select id="db-' + esc(id) + '">' + opts + "</select>"
-          + '<button onclick=\'submitCleaning(' + arg(id) + ")'>提交清洗参数</button>";
+          + '<button onclick="submitCleaning(' + arg(id) + ')">提交清洗参数</button>';
       }
       if (o.status === "recheck") {
         return '<label>复检人（不得与操作人相同）</label><input id="ri-' + esc(id) + '">'
           + '<label>复检结果</label><select id="rr-' + esc(id) + '"><option value="pass">通过</option><option value="fail">不通过</option></select>'
           + '<label>复检备注</label><input id="rn-' + esc(id) + '">'
-          + '<button onclick=\'submitRecheck(' + arg(id) + ")'>提交复检</button>";
+          + '<button onclick="submitRecheck(' + arg(id) + ')">提交复检</button>';
       }
       if (o.status === "rechecked") {
         return '<label>放行人</label><input id="rb-' + esc(id) + '">'
           + '<label>有效期（小时，默认' + S.config.defaultValidHours + '）</label><input id="vh-' + esc(id) + '" type="number" step="0.1" placeholder="' + S.config.defaultValidHours + '">'
-          + '<button onclick=\'releaseOrder(' + arg(id) + ")'>放行</button>";
+          + '<button onclick="releaseOrder(' + arg(id) + ')">放行</button>';
       }
       return "";
     }

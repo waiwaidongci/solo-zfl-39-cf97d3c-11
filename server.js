@@ -18,7 +18,7 @@ const CLEAN_RULES = {
 };
 const DEFAULT_VALID_HOURS = 72;
 const MAX_VALID_HOURS = 24 * 7;
-const EXPIRING_SOON_HOURS = 72;
+const EXPIRING_SOON_HOURS = 24;
 const VAT_STATUS = {
   dirty: "待清洗",
   cleaning: "清洗中",
@@ -497,7 +497,7 @@ async function route(req, res, url, db) {
     const batch = String(input.disinfectantBatch || "").trim();
     if (!batch) missing.push("消毒剂批次");
     if (missing.length) fail(400, "missing_fields", "清洗参数不全，缺少：" + missing.join("、") + "；工单保持已领单状态，可补全后重新提交", { missing });
-    // 第二关：越界或批次过期 → 整单拒绝
+    // 第二关：越界或批次过期 → 整单拒绝。失败请求完全回滚：不改动工单、缸具、占用与审计
     const reasons = [];
     for (const [key, rule] of Object.entries(CLEAN_RULES)) {
       if (values[key] < rule.min || values[key] > rule.max) reasons.push(rule.label + " " + values[key] + rule.unit + " 超出范围 " + rule.min + "–" + rule.max + rule.unit);
@@ -505,20 +505,11 @@ async function route(req, res, url, db) {
     const dis = db.disinfectants.find((d) => d.batch === batch);
     if (!dis) reasons.push("消毒剂批次「" + batch + "」不存在");
     else if (new Date(dis.expiresAt + "T23:59:59").getTime() < Date.now()) reasons.push("消毒剂批次「" + batch + "」已于 " + dis.expiresAt + " 过期");
+    if (reasons.length) {
+      return send(res, 422, { error: "cleaning_rejected", message: "清洗参数越界或消毒剂批次过期，整单拒绝：" + reasons.join("；") + "。工单保持已领单状态，可修正后重新提交", reasons });
+    }
     const vat = db.vats.find((v) => v.id === order.vatId);
     order.cleaning = { ...values, operator, disinfectantBatch: batch, at: nowIso() };
-    if (reasons.length) {
-      order.status = "rejected";
-      order.rejectedReason = reasons.join("；");
-      order.rejectedAt = nowIso();
-      if (vat && vat.activeOrderId === order.id) {
-        vat.activeOrderId = null;
-        vat.status = "dirty";
-      }
-      audit(db, operator, "order_rejected", "工单 " + order.id + " 整单拒绝：" + order.rejectedReason, { vatId: order.vatId, orderId: order.id });
-      await saveDb(db);
-      return send(res, 422, { error: "order_rejected", message: "清洗参数越界或消毒剂批次过期，整单拒绝", reasons, order: orderView(db, order) });
-    }
     order.status = "recheck";
     if (vat) vat.status = "recheck";
     audit(db, operator, "cleaning_submit", "工单 " + order.id + " 清洗参数登记完成（温度" + values.temperature + "℃，浓度" + values.concentration + "%，时长" + values.durationMinutes + "分钟，批次" + batch + "）", { vatId: order.vatId, orderId: order.id });
@@ -609,6 +600,10 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (req.method === "GET" && url.pathname === "/") return html(res, page());
+    if (req.method === "GET" && url.pathname === "/favicon.ico") {
+      res.writeHead(204);
+      return res.end();
+    }
     if (!url.pathname.startsWith("/api/")) return send(res, 404, { error: "not_found" });
     await withLock(async () => {
       const db = await loadDb();

@@ -129,35 +129,38 @@ console.log("\n[B] 建档 → 派单 → 领单 → 参数登记 → 复检 → 
   const stillClaimed = await api("/api/cleaning-orders?status=claimed");
   ok(stillClaimed.data.some((o) => o.id === orderId), "缺项失败后工单保持已领单，可补录");
 
+  // 422 必须完全回滚：越界与批次过期，状态、占用、审计保持请求前不变
+  const pick = (v) => ({ id: v.id, status: v.status, occupiedBy: v.occupiedBy, activeOrderId: v.activeOrderId, release: v.release });
+  const snapVats = (await api("/api/vats")).data.map(pick);
+  const snapOrders = (await api("/api/cleaning-orders")).data.map((o) => ({ id: o.id, status: o.status, cleaning: o.cleaning, claimedBy: o.claimedBy }));
+  const snapAuditLen = (await api("/api/audit")).data.length;
   const oor = await post(`/api/cleaning-orders/${orderId}/cleaning`, { temperature: 30, concentration: 2.5, durationMinutes: 40, operator: "张三", disinfectantBatch: "D-OK" });
-  ok(oor.status === 422 && oor.data.error === "order_rejected", "温度越界整单拒绝", oor);
-  ok(oor.data.order.status === "rejected", "工单状态=已拒绝");
-  let vats = await api("/api/vats");
-  ok(vats.data.find((x) => x.id === vatId).status === "dirty", "整单拒绝后缸具回待清洗");
+  ok(oor.status === 422 && oor.data.error === "cleaning_rejected", "温度越界返回422整单拒绝", oor);
+  const exp = await post(`/api/cleaning-orders/${orderId}/cleaning`, { temperature: 85, concentration: 2.5, durationMinutes: 40, operator: "张三", disinfectantBatch: "D-EXP" });
+  ok(exp.status === 422 && exp.data.error === "cleaning_rejected", "消毒剂批次过期返回422整单拒绝", exp);
+  const afterVats = (await api("/api/vats")).data.map(pick);
+  const afterOrders = (await api("/api/cleaning-orders")).data.map((o) => ({ id: o.id, status: o.status, cleaning: o.cleaning, claimedBy: o.claimedBy }));
+  const afterAuditLen = (await api("/api/audit")).data.length;
+  ok(JSON.stringify(afterVats) === JSON.stringify(snapVats), "422后缸具状态与活动工单完全未变");
+  ok(JSON.stringify(afterOrders) === JSON.stringify(snapOrders), "422后工单状态完全未变");
+  ok(afterAuditLen === snapAuditLen, "422后不新增审计", { before: snapAuditLen, after: afterAuditLen });
+  const orderAfter = afterOrders.find((o) => o.id === orderId);
+  ok(orderAfter.status === "claimed" && !orderAfter.cleaning, "工单保持已领单且未写入参数", orderAfter);
 
-  // 批次过期 → 整单拒绝
-  const d3 = await post("/api/cleaning-orders", { vatId, shift: "中班" });
-  await post(`/api/cleaning-orders/${d3.data.id}/claim`, { operator: "张三" });
-  const exp = await post(`/api/cleaning-orders/${d3.data.id}/cleaning`, { temperature: 85, concentration: 2.5, durationMinutes: 40, operator: "张三", disinfectantBatch: "D-EXP" });
-  ok(exp.status === 422 && exp.data.error === "order_rejected", "消毒剂批次过期整单拒绝", exp);
-
-  // 正常流程到放行
-  const d4 = await post("/api/cleaning-orders", { vatId, shift: "晚班" });
-  const oid = d4.data.id;
-  await post(`/api/cleaning-orders/${oid}/claim`, { operator: "张三" });
-  const good = await post(`/api/cleaning-orders/${oid}/cleaning`, { temperature: 85, concentration: 2.5, durationMinutes: 40, operator: "张三", disinfectantBatch: "D-OK" });
-  ok(good.status === 200 && good.data.status === "recheck", "参数齐全且在界内，提交成功转复检");
-  const same = await post(`/api/cleaning-orders/${oid}/recheck`, { inspector: "张三", result: "pass" });
+  // 回滚后同一工单可修正重提，继续走通
+  const good = await post(`/api/cleaning-orders/${orderId}/cleaning`, { temperature: 85, concentration: 2.5, durationMinutes: 40, operator: "张三", disinfectantBatch: "D-OK" });
+  ok(good.status === 200 && good.data.status === "recheck", "修正后重新提交成功转复检");
+  const same = await post(`/api/cleaning-orders/${orderId}/recheck`, { inspector: "张三", result: "pass" });
   ok(same.status === 400 && same.data.error === "same_person", "复检人与操作人相同被拒", same);
-  const rc = await post(`/api/cleaning-orders/${oid}/recheck`, { inspector: "李四", result: "pass" });
+  const rc = await post(`/api/cleaning-orders/${orderId}/recheck`, { inspector: "李四", result: "pass" });
   ok(rc.status === 200 && rc.data.status === "rechecked", "复检通过待放行");
   const earlyRelease = await api("/api/vats?usable=1");
   ok(!earlyRelease.data.some((x) => x.id === vatId), "未放行的缸具不可用于批次");
-  const rl = await post(`/api/cleaning-orders/${oid}/release`, { releasedBy: "王班长", validHours: 72 });
+  const rl = await post(`/api/cleaning-orders/${orderId}/release`, { releasedBy: "王班长", validHours: 72 });
   ok(rl.status === 200 && rl.data.status === "released" && rl.data.release.validUntil, "放行成功并带有效期");
-  const rl2 = await post(`/api/cleaning-orders/${oid}/release`, { releasedBy: "王班长" });
+  const rl2 = await post(`/api/cleaning-orders/${orderId}/release`, { releasedBy: "王班长" });
   ok(rl2.status === 409, "重复放行被拒（只成功一次）", rl2.status);
-  vats = await api("/api/vats");
+  const vats = await api("/api/vats");
   ok(vats.data.find((x) => x.id === vatId).status === "released", "缸具状态=已放行");
 }
 
@@ -312,6 +315,12 @@ console.log("\n[I] 页面与接口一致");
   const html = await res.text();
   ok(res.status === 200 && html.includes("缸具与清洗") && html.includes("审计日志"), "页面包含缸具清洗与审计页签");
   ok(html.includes("/api/cleaning-orders") && html.includes("/api/vats") && html.includes("swap-vat"), "页面调用与后端一致的接口");
+  // 页面脚本执行回归：服务端模板不得吃掉客户端转义，脚本必须可解析执行
+  const script = (html.match(/<script>([\s\S]*?)<\/script>/) || [])[1] || "";
+  let syntaxErr = "";
+  try { new Function(script); } catch (e) { syntaxErr = e.message; }
+  ok(script.length > 0 && !syntaxErr, "页面脚本语法可执行（无模板转义泄漏）", syntaxErr);
+  ok(!html.includes("onclick='"), "事件绑定不使用会被模板吃掉转义的单引号属性");
   const cfg = await api("/api/config");
   ok(cfg.status === 200 && cfg.data.cleanRules.temperature.max === 100 && cfg.data.shifts.length === 3, "规则与班次通过接口下发");
 }
